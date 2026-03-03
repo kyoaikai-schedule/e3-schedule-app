@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Calendar, CalendarDays, Settings, Moon, Sun, Clock, RefreshCw, AlertCircle, CheckCircle, Plus, Trash2, LogOut, Lock, Download, Upload, Edit2, Save, X, Eye, Users, FileSpreadsheet, Activity, Maximize2, Minimize2, ChevronUp, ChevronDown, RotateCcw, History } from 'lucide-react';
+import { Calendar, CalendarDays, Settings, Moon, Sun, Clock, RefreshCw, AlertCircle, CheckCircle, Plus, Trash2, LogOut, Lock, Download, Upload, Edit2, Save, X, Eye, Users, FileSpreadsheet, Activity, Maximize2, Minimize2, ChevronUp, ChevronDown, RotateCcw, History, BarChart3 } from 'lucide-react';
 import * as XLSX from 'xlsx-js-style';
 import { supabase } from './lib/supabase';
 
@@ -258,6 +258,7 @@ const HcuScheduleSystem = ({ department = 'HCU', onBack }: { department?: 'HCU' 
   const [showMySchedule, setShowMySchedule] = useState(false);
   const [showAuditLog, setShowAuditLog] = useState(false);
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const [showStats, setShowStats] = useState(false);
   
   // ローディング状態
   const [isLoading, setIsLoading] = useState(true);
@@ -2816,6 +2817,9 @@ const HcuScheduleSystem = ({ department = 'HCU', onBack }: { department?: 'HCU' 
                 <button onClick={() => setShowDeadlineSettings(true)} className="px-3 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg text-sm flex items-center gap-1">
                   <Clock size={16} /> 締め切り設定
                 </button>
+                <button onClick={() => setShowStats(true)} className="px-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-sm flex items-center gap-1">
+                  <BarChart3 size={16} /> シフト統計
+                </button>
                 <button onClick={async () => { setAuditLogs(await fetchAuditLogs()); setShowAuditLog(true); }} className="px-3 py-2 bg-orange-50 hover:bg-orange-100 text-orange-700 rounded-lg text-sm flex items-center gap-1">
                   <History size={16} /> 変更履歴
                 </button>
@@ -3047,6 +3051,121 @@ const HcuScheduleSystem = ({ department = 'HCU', onBack }: { department?: 'HCU' 
             </div>
           </div>
         )}
+
+        {/* シフト統計モーダル */}
+        {showStats && (() => {
+          const hasScheduleData = schedule && schedule.month === `${targetYear}-${targetMonth}`;
+          const stats = activeNurses.map(nurse => {
+            const shifts = hasScheduleData ? (schedule.data[nurse.id] || []).map((s: any) => sanitizeShift(s)) : [];
+            let dayShifts = 0, nightShifts = 0, daysOff = 0, paidLeave = 0, halfDays = 0, totalWork = 0;
+            shifts.forEach((s: any) => {
+              if (s === '日') { dayShifts++; totalWork++; }
+              else if (s === '夜' || s === '管夜') { nightShifts++; totalWork++; }
+              else if (s === '休') daysOff++;
+              else if (s === '有') { daysOff++; paidLeave++; }
+              else if (s === '午前半' || s === '午後半') { halfDays++; totalWork++; }
+            });
+            const restTotal = daysOff + halfDays * 0.5;
+            return { nurse, dayShifts, nightShifts, daysOff, paidLeave, halfDays, totalWork, restTotal };
+          });
+          const maxNight = Math.max(...stats.map(s => s.nightShifts), 1);
+          const maxWork = Math.max(...stats.map(s => s.totalWork), 1);
+          const maxRest = Math.max(...stats.map(s => s.restTotal), 1);
+          const sumWork = stats.reduce((a, s) => a + s.totalWork, 0);
+          const sumNight = stats.reduce((a, s) => a + s.nightShifts, 0);
+          const sumDay = stats.reduce((a, s) => a + s.dayShifts, 0);
+          const sumRest = stats.reduce((a, s) => a + s.restTotal, 0);
+          const sumPaid = stats.reduce((a, s) => a + s.paidLeave, 0);
+          const sumHalf = stats.reduce((a, s) => a + s.halfDays, 0);
+          const cnt = stats.length || 1;
+
+          const BarChart = ({ items, maxVal, color, label }: { items: { name: string; value: number }[]; maxVal: number; color: string; label: string }) => (
+            <div className="mb-6">
+              <h4 className="text-sm font-bold text-gray-700 mb-2">{label}</h4>
+              <div className="space-y-1">
+                {items.map((item, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <span className="w-24 text-xs text-right truncate shrink-0">{item.name}</span>
+                    <div className="flex-1 bg-gray-100 rounded-full h-5 overflow-hidden">
+                      <div className={`${color} h-full rounded-full transition-all`} style={{ width: `${(item.value / maxVal) * 100}%`, minWidth: item.value > 0 ? '8px' : '0' }} />
+                    </div>
+                    <span className="w-8 text-xs text-gray-600 text-right">{item.value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+
+          return (
+            <div className="fixed inset-0 bg-black/50 z-50 overflow-y-auto">
+              <div className="max-w-4xl mx-auto my-4 p-6 bg-white rounded-2xl">
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="text-lg font-bold">📊 {targetYear}年{targetMonth + 1}月 シフト統計</h3>
+                  <button onClick={() => setShowStats(false)} className="p-2 hover:bg-gray-100 rounded-full">
+                    <X size={20} />
+                  </button>
+                </div>
+
+                {!hasScheduleData ? (
+                  <div className="text-center py-12 text-gray-500">
+                    <BarChart3 size={48} className="mx-auto mb-3 opacity-30" />
+                    <p>勤務表がまだ生成されていません</p>
+                  </div>
+                ) : (
+                  <>
+                    <BarChart label="🌙 夜勤回数" maxVal={maxNight} color="bg-purple-400" items={stats.map(s => ({ name: s.nurse.name, value: s.nightShifts }))} />
+                    <BarChart label="📋 出勤日数" maxVal={maxWork} color="bg-blue-400" items={stats.map(s => ({ name: s.nurse.name, value: s.totalWork }))} />
+                    <BarChart label="🏖️ 休日数" maxVal={maxRest} color="bg-emerald-400" items={stats.map(s => ({ name: s.nurse.name, value: s.restTotal }))} />
+
+                    <div>
+                      <h4 className="text-sm font-bold text-gray-700 mb-2">📋 詳細一覧</h4>
+                      <div className="overflow-auto">
+                        <table className="w-full border-collapse text-sm">
+                          <thead className="bg-gray-50">
+                            <tr>
+                              <th className="border p-2 text-left">氏名</th>
+                              <th className="border p-2 text-center">役職</th>
+                              <th className="border p-2 text-center">日勤</th>
+                              <th className="border p-2 text-center">夜勤</th>
+                              <th className="border p-2 text-center">出勤計</th>
+                              <th className="border p-2 text-center">休日</th>
+                              <th className="border p-2 text-center">有休</th>
+                              <th className="border p-2 text-center">半休</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {stats.map(s => (
+                              <tr key={s.nurse.id} className="hover:bg-gray-50">
+                                <td className="border p-2">{s.nurse.name}</td>
+                                <td className="border p-2 text-center"><span className={`text-xs px-1.5 py-0.5 rounded ${POSITIONS[s.nurse.position]?.color}`}>{s.nurse.position}</span></td>
+                                <td className="border p-2 text-center">{s.dayShifts}</td>
+                                <td className="border p-2 text-center">{s.nightShifts}</td>
+                                <td className="border p-2 text-center font-bold">{s.totalWork}</td>
+                                <td className="border p-2 text-center">{s.restTotal}</td>
+                                <td className="border p-2 text-center">{s.paidLeave}</td>
+                                <td className="border p-2 text-center">{s.halfDays}</td>
+                              </tr>
+                            ))}
+                            <tr className="bg-gray-100 font-bold">
+                              <td className="border p-2">平均 / 合計</td>
+                              <td className="border p-2 text-center text-xs text-gray-500">{cnt}名</td>
+                              <td className="border p-2 text-center">{(sumDay / cnt).toFixed(1)}</td>
+                              <td className="border p-2 text-center">{(sumNight / cnt).toFixed(1)}</td>
+                              <td className="border p-2 text-center">{(sumWork / cnt).toFixed(1)}</td>
+                              <td className="border p-2 text-center">{(sumRest / cnt).toFixed(1)}</td>
+                              <td className="border p-2 text-center">{sumPaid}</td>
+                              <td className="border p-2 text-center">{sumHalf}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* 変更履歴モーダル */}
         {showAuditLog && (
