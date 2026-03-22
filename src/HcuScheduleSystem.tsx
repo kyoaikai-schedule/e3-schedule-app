@@ -450,7 +450,7 @@ const HcuScheduleSystem = ({ department = 'HCU', onBack }: { department?: 'HCU' 
         const savedNgPairs = await fetchSettingFromDB('nightNgPairs');
         if (savedNgPairs) {
           try {
-            setNightNgPairs(JSON.parse(savedNgPairs));
+            setNightNgPairs(JSON.parse(savedNgPairs).map(([a, b]: any) => [Number(a), Number(b)]));
           } catch(e) { console.error('夜勤NGペア解析エラー:', e); }
         }
 
@@ -1893,6 +1893,7 @@ const HcuScheduleSystem = ({ department = 'HCU', onBack }: { department?: 'HCU' 
           const cands = generationNurses.filter(n => {
             if (adj[n.id][day] !== '休') return false;
             if (isLocked(n.id, day)) return false;
+            if (day > 0 && isAkeShift(adj[n.id][day - 1])) return false;
             if (nurseShiftPrefs[n.id]?.noDayShift) return false;
             if (isSunday(day) && n.position === '師長') return false;
             if (nurseShiftPrefs[n.id]?.excludeFromMaxDaysOff) return false;
@@ -1964,6 +1965,7 @@ const HcuScheduleSystem = ({ department = 'HCU', onBack }: { department?: 'HCU' 
           const cands = generationNurses.filter(n => {
             if (adj[n.id][overDay] !== '日' || adj[n.id][shortDay] !== '休') return false;
             if (isLocked(n.id, overDay) || isLocked(n.id, shortDay)) return false;
+            if (shortDay > 0 && isAkeShift(adj[n.id][shortDay - 1])) return false;
             if (nurseShiftPrefs[n.id]?.noDayShift) return false;
             if (isSunday(shortDay) && n.position === '師長') return false;
             let before = 0;
@@ -1994,6 +1996,7 @@ const HcuScheduleSystem = ({ department = 'HCU', onBack }: { department?: 'HCU' 
         const cands = generationNurses.filter(n => {
           if (adj[n.id][day] !== '休') return false;
           if (isLocked(n.id, day)) return false;
+          if (day > 0 && isAkeShift(adj[n.id][day - 1])) return false;
           if (nurseShiftPrefs[n.id]?.noDayShift) return false;
           if (isSunday(day) && n.position === '師長') return false;
           if (nurseShiftPrefs[n.id]?.excludeFromMaxDaysOff) return false;
@@ -3562,6 +3565,99 @@ const HcuScheduleSystem = ({ department = 'HCU', onBack }: { department?: 'HCU' 
               </div>
             </div>
           </div>
+          </div>
+        )}
+
+        {/* 夜勤NG組み合わせモーダル（ダッシュボード用） */}
+        {showNightNgPairs && (
+          <div className="fixed inset-0 bg-black/50 z-50 overflow-y-auto">
+            <div className="min-h-full flex items-center justify-center p-4">
+              <div className="bg-white rounded-2xl p-6 w-full max-w-lg my-4">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-xl font-bold">🚫 夜勤NG組み合わせ</h3>
+                  <button onClick={() => setShowNightNgPairs(false)} className="p-2 hover:bg-gray-100 rounded-full">
+                    <X size={24} />
+                  </button>
+                </div>
+
+                <div className="bg-red-50 border border-red-200 rounded-xl p-3 mb-4">
+                  <p className="text-sm text-red-800">
+                    <strong>💡 説明：</strong>登録したペアは自動生成時に同じ日の夜勤に配置されません。
+                  </p>
+                </div>
+
+                <div className="mb-4">
+                  <h4 className="text-sm font-bold text-gray-700 mb-2">登録済みペア（{nightNgPairs.length}組）</h4>
+                  {nightNgPairs.length === 0 ? (
+                    <p className="text-sm text-gray-400 py-2">まだ登録されていません</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {nightNgPairs.map(([a, b], idx) => {
+                        const nameA = activeNurses.find(n => n.id === a)?.name || `ID:${a}`;
+                        const nameB = activeNurses.find(n => n.id === b)?.name || `ID:${b}`;
+                        return (
+                          <div key={idx} className="flex items-center justify-between bg-gray-50 rounded-lg p-2">
+                            <span className="text-sm font-medium">{nameA} × {nameB}</span>
+                            <button
+                              onClick={() => {
+                                const updated = nightNgPairs.filter((_, i) => i !== idx);
+                                setNightNgPairs(updated);
+                                saveWithStatus(async () => {
+                                  await saveSettingToDB('nightNgPairs', JSON.stringify(updated));
+                                });
+                              }}
+                              className="p-1 text-red-500 hover:bg-red-100 rounded"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                <div className="border-t pt-4">
+                  <h4 className="text-sm font-bold text-gray-700 mb-2">新規追加</h4>
+                  <div className="flex gap-2 items-end">
+                    <select id="ngPairA2" className="flex-1 px-3 py-2 border-2 rounded-lg text-sm">
+                      <option value="">選択...</option>
+                      {activeNurses.map(n => (
+                        <option key={n.id} value={n.id}>{n.name}</option>
+                      ))}
+                    </select>
+                    <span className="text-gray-400 text-sm pb-2">×</span>
+                    <select id="ngPairB2" className="flex-1 px-3 py-2 border-2 rounded-lg text-sm">
+                      <option value="">選択...</option>
+                      {activeNurses.map(n => (
+                        <option key={n.id} value={n.id}>{n.name}</option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={() => {
+                        const selA = document.getElementById('ngPairA2') as HTMLSelectElement;
+                        const selB = document.getElementById('ngPairB2') as HTMLSelectElement;
+                        const a = parseInt(selA.value);
+                        const b = parseInt(selB.value);
+                        if (!a || !b || a === b) { alert('異なる2名を選択してください'); return; }
+                        const exists = nightNgPairs.some(([x, y]) => (x === a && y === b) || (x === b && y === a));
+                        if (exists) { alert('このペアは既に登録されています'); return; }
+                        const updated: [number, number][] = [...nightNgPairs, [a, b]];
+                        setNightNgPairs(updated);
+                        saveWithStatus(async () => {
+                          await saveSettingToDB('nightNgPairs', JSON.stringify(updated));
+                        });
+                        selA.value = '';
+                        selB.value = '';
+                      }}
+                      className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm whitespace-nowrap"
+                    >
+                      追加
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         )}
       </div>
