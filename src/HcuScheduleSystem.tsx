@@ -322,7 +322,8 @@ const HcuScheduleSystem = ({ department = 'HCU', onBack }: { department?: 'HCU' 
     weekdayDayStaff: 6, // 平日の日勤者数（目標6人、6-8人許容）
     weekendDayStaff: 5, // 土日の日勤者数（厳格: 5人）
     yearEndDayStaff: 4, // 年末（12/30-31）の日勤者数
-    newYearDayStaff: 4  // 年始（1/1-3）の日勤者数
+    newYearDayStaff: 4,  // 年始（1/1-3）の日勤者数
+    excludeMgmtFromNightCount: false  // 管理当直（管夜/管明）を夜勤回数カウントから除外
   });
   
   // 前月データ関連（確定済み）
@@ -1218,6 +1219,14 @@ const HcuScheduleSystem = ({ department = 'HCU', onBack }: { department?: 'HCU' 
       maxNightShifts: generateConfig.maxNightShifts,
       maxDaysOff: generateConfig.maxDaysOff,
       maxConsec: generateConfig.maxConsecutiveDays,
+      excludeMgmtFromNightCount: generateConfig.excludeMgmtFromNightCount,
+    };
+
+    // 夜勤カウント用ヘルパー（管理当直除外オプション対応）
+    const isCountableNight = (s: any) => {
+      if (!isNightShift(s)) return false;
+      if (cfg.excludeMgmtFromNightCount && s === '管夜') return false;
+      return true;
     };
 
     // 連続勤務ヘルパー
@@ -1286,7 +1295,7 @@ const HcuScheduleSystem = ({ department = 'HCU', onBack }: { department?: 'HCU' 
 
       const cnt = (nid: number, sh: string) => {
         if (isOff(sh)) st[nid].daysOff++;
-        else if (isNightShift(sh)) { st[nid].nightCount++; st[nid].totalWork++; }
+        else if (isNightShift(sh)) { if (isCountableNight(sh)) st[nid].nightCount++; st[nid].totalWork++; }
         else if (!isAkeShift(sh)) { if (sh === '日') st[nid].dayWorkCount++; st[nid].totalWork++; }
       };
 
@@ -1364,7 +1373,7 @@ const HcuScheduleSystem = ({ department = 'HCU', onBack }: { department?: 'HCU' 
         });
 
         avail.slice(0, nReq).forEach(n => {
-          sc[n.id][day] = '夜'; st[n.id].nightCount++; st[n.id].totalWork++;
+          sc[n.id][day] = '夜'; if (isCountableNight('夜')) st[n.id].nightCount++; st[n.id].totalWork++;
           if (isSp) st[n.id].weekendWork++;
           if (day + 1 < daysInMonth && !sc[n.id][day + 1] && !isLocked(n.id, day + 1)) sc[n.id][day + 1] = '明';
           if (day + 2 < daysInMonth && !sc[n.id][day + 2] && !isLocked(n.id, day + 2)) { sc[n.id][day + 2] = '休'; st[n.id].daysOff++; }
@@ -1663,10 +1672,10 @@ const HcuScheduleSystem = ({ department = 'HCU', onBack }: { department?: 'HCU' 
           const pr = nurseShiftPrefs[n.id];
           if (pr?.noNightShift) return false;
           const mx = pr?.maxNightShifts ?? cfg.maxNightShifts;
-          if (adj[n.id].filter((s: any) => isNightShift(s)).length >= mx) return false;
+          if (adj[n.id].filter((s: any) => isCountableNight(s)).length >= mx) return false;
           if (wouldBeTripleNight(adj, n.id, day)) return false;
           return true;
-        }).sort((a, b) => adj[a.id].filter((s: any) => isNightShift(s)).length - adj[b.id].filter((s: any) => isNightShift(s)).length);
+        }).sort((a, b) => adj[a.id].filter((s: any) => isCountableNight(s)).length - adj[b.id].filter((s: any) => isCountableNight(s)).length);
         if (cands.length === 0) break;
         const pk = cands[0];
         adj[pk.id][day] = '夜';
@@ -1677,7 +1686,7 @@ const HcuScheduleSystem = ({ department = 'HCU', onBack }: { department?: 'HCU' 
       while (nc > nReq) {
         const nns = generationNurses.filter(n => adj[n.id][day] === '夜' && !isLocked(n.id, day));
         if (nns.length === 0) break;
-        nns.sort((a, b) => adj[b.id].filter((s: any) => isNightShift(s)).length - adj[a.id].filter((s: any) => isNightShift(s)).length);
+        nns.sort((a, b) => adj[b.id].filter((s: any) => isCountableNight(s)).length - adj[a.id].filter((s: any) => isCountableNight(s)).length);
         adj[nns[0].id][day] = '日';
         if (day + 1 < daysInMonth && adj[nns[0].id][day + 1] === '明' && !isLocked(nns[0].id, day + 1)) adj[nns[0].id][day + 1] = '日';
         nc--;
@@ -1709,7 +1718,7 @@ const HcuScheduleSystem = ({ department = 'HCU', onBack }: { department?: 'HCU' 
       // 職員別夜勤上限（ロック保護）
       const pr = nurseShiftPrefs[n.id];
       const mx = pr?.noNightShift ? 0 : (pr?.maxNightShifts ?? cfg.maxNightShifts);
-      let nc2 = adj[n.id].filter((s: any) => isNightShift(s)).length;
+      let nc2 = adj[n.id].filter((s: any) => isCountableNight(s)).length;
       if (nc2 > mx) {
         for (let d = daysInMonth - 1; d >= 0 && nc2 > mx; d--) {
           if (adj[n.id][d] === '夜' && !isLocked(n.id, d)) {
@@ -1735,10 +1744,10 @@ const HcuScheduleSystem = ({ department = 'HCU', onBack }: { department?: 'HCU' 
       let nc = 0;
       generationNurses.forEach(n => { if (isNightShift(adj[n.id][day])) nc++; });
       while (nc < nReq) {
-        const c = generationNurses.filter(n => !isNightShift(adj[n.id][day]) && !isAkeShift(adj[n.id][day]) && !isLocked(n.id, day) && !(day > 0 && isNightShift(adj[n.id][day-1])) && !(day+1 < daysInMonth && isNightShift(adj[n.id][day+1])) && !nurseShiftPrefs[n.id]?.noNightShift && adj[n.id].filter((s: any) => isNightShift(s)).length < (nurseShiftPrefs[n.id]?.maxNightShifts ?? cfg.maxNightShifts)
+        const c = generationNurses.filter(n => !isNightShift(adj[n.id][day]) && !isAkeShift(adj[n.id][day]) && !isLocked(n.id, day) && !(day > 0 && isNightShift(adj[n.id][day-1])) && !(day+1 < daysInMonth && isNightShift(adj[n.id][day+1])) && !nurseShiftPrefs[n.id]?.noNightShift && adj[n.id].filter((s: any) => isCountableNight(s)).length < (nurseShiftPrefs[n.id]?.maxNightShifts ?? cfg.maxNightShifts)
           && !(day + 1 < daysInMonth && isLocked(n.id, day + 1) && exReqs[n.id]?.[day + 1] && exReqs[n.id][day + 1] !== '明')
           && !wouldBeTripleNight(adj, n.id, day))
-          .sort((a, b) => adj[a.id].filter((s: any) => isNightShift(s)).length - adj[b.id].filter((s: any) => isNightShift(s)).length);
+          .sort((a, b) => adj[a.id].filter((s: any) => isCountableNight(s)).length - adj[b.id].filter((s: any) => isCountableNight(s)).length);
         if (c.length === 0) break;
         adj[c[0].id][day] = '夜';
         if (day + 1 < daysInMonth && !isLocked(c[0].id, day + 1)) adj[c[0].id][day + 1] = '明';
@@ -1748,7 +1757,7 @@ const HcuScheduleSystem = ({ department = 'HCU', onBack }: { department?: 'HCU' 
       while (nc > nReq) {
         const nn = generationNurses.filter(n => adj[n.id][day] === '夜' && !isLocked(n.id, day));
         if (nn.length === 0) break;
-        nn.sort((a, b) => adj[b.id].filter((s: any) => isNightShift(s)).length - adj[a.id].filter((s: any) => isNightShift(s)).length);
+        nn.sort((a, b) => adj[b.id].filter((s: any) => isCountableNight(s)).length - adj[a.id].filter((s: any) => isCountableNight(s)).length);
         adj[nn[0].id][day] = '日';
         if (day + 1 < daysInMonth && adj[nn[0].id][day + 1] === '明' && !isLocked(nn[0].id, day + 1)) adj[nn[0].id][day + 1] = '日';
         nc--;
@@ -1809,10 +1818,10 @@ const HcuScheduleSystem = ({ department = 'HCU', onBack }: { department?: 'HCU' 
           const pr = nurseShiftPrefs[n.id];
           if (pr?.noNightShift) return false;
           const mx = pr?.maxNightShifts ?? cfg.maxNightShifts;
-          if (adj[n.id].filter((s: any) => isNightShift(s)).length >= mx) return false;
+          if (adj[n.id].filter((s: any) => isCountableNight(s)).length >= mx) return false;
           if (wouldBeTripleNight(adj, n.id, day)) return false;
           return true;
-        }).sort((a, b) => adj[a.id].filter((s: any) => isNightShift(s)).length - adj[b.id].filter((s: any) => isNightShift(s)).length);
+        }).sort((a, b) => adj[a.id].filter((s: any) => isCountableNight(s)).length - adj[b.id].filter((s: any) => isCountableNight(s)).length);
 
         if (cands.length === 0) break;
         const pk = cands[0];
@@ -1825,7 +1834,7 @@ const HcuScheduleSystem = ({ department = 'HCU', onBack }: { department?: 'HCU' 
       while (nc > nReq) {
         const nns = generationNurses.filter(n => adj[n.id][day] === '夜' && !isLocked(n.id, day));
         if (nns.length === 0) break;
-        nns.sort((a, b) => adj[b.id].filter((s: any) => isNightShift(s)).length - adj[a.id].filter((s: any) => isNightShift(s)).length);
+        nns.sort((a, b) => adj[b.id].filter((s: any) => isCountableNight(s)).length - adj[a.id].filter((s: any) => isCountableNight(s)).length);
         adj[nns[0].id][day] = '日';
         if (day + 1 < daysInMonth && adj[nns[0].id][day + 1] === '明' && !isLocked(nns[0].id, day + 1)) adj[nns[0].id][day + 1] = '日';
         nc--;
@@ -1871,8 +1880,8 @@ const HcuScheduleSystem = ({ department = 'HCU', onBack }: { department?: 'HCU' 
             const posOrder = (n: any) => ['師長', '主任', '副主任'].includes(n.position) ? 0 : 1;
             const aPo = posOrder(a); const bPo = posOrder(b);
             if (aPo !== bPo) return aPo - bPo;
-            const aNight = adj[a.id].filter((s: any) => isNightShift(s)).length;
-            const bNight = adj[b.id].filter((s: any) => isNightShift(s)).length;
+            const aNight = adj[a.id].filter((s: any) => isCountableNight(s)).length;
+            const bNight = adj[b.id].filter((s: any) => isCountableNight(s)).length;
             const aLow = aNight < 3 ? 0 : 1;
             const bLow = bNight < 3 ? 0 : 1;
             if (aLow !== bLow) return aLow - bLow;
@@ -2003,10 +2012,10 @@ const HcuScheduleSystem = ({ department = 'HCU', onBack }: { department?: 'HCU' 
           const pr = nurseShiftPrefs[n.id];
           if (pr?.noNightShift) return false;
           const mx = pr?.maxNightShifts ?? cfg.maxNightShifts;
-          if (adj[n.id].filter((s: any) => isNightShift(s)).length >= mx) return false;
+          if (adj[n.id].filter((s: any) => isCountableNight(s)).length >= mx) return false;
           if (wouldBeTripleNight(adj, n.id, day)) return false;
           return true;
-        }).sort((a, b) => adj[a.id].filter((s: any) => isNightShift(s)).length - adj[b.id].filter((s: any) => isNightShift(s)).length);
+        }).sort((a, b) => adj[a.id].filter((s: any) => isCountableNight(s)).length - adj[b.id].filter((s: any) => isCountableNight(s)).length);
 
         // 第1候補が見つからない場合、緩和条件で再検索（夜勤上限を+1まで許容）
         if (cands.length === 0) {
@@ -2019,10 +2028,10 @@ const HcuScheduleSystem = ({ department = 'HCU', onBack }: { department?: 'HCU' 
             const pr = nurseShiftPrefs[n.id];
             if (pr?.noNightShift) return false;
             const mx = (pr?.maxNightShifts ?? cfg.maxNightShifts) + 1;
-            if (adj[n.id].filter((s: any) => isNightShift(s)).length >= mx) return false;
+            if (adj[n.id].filter((s: any) => isCountableNight(s)).length >= mx) return false;
             if (wouldBeTripleNight(adj, n.id, day)) return false;
             return true;
-          }).sort((a, b) => adj[a.id].filter((s: any) => isNightShift(s)).length - adj[b.id].filter((s: any) => isNightShift(s)).length);
+          }).sort((a, b) => adj[a.id].filter((s: any) => isCountableNight(s)).length - adj[b.id].filter((s: any) => isCountableNight(s)).length);
         }
 
         if (cands.length === 0) break;
@@ -2037,7 +2046,7 @@ const HcuScheduleSystem = ({ department = 'HCU', onBack }: { department?: 'HCU' 
       while (nc > nReq) {
         const nns = generationNurses.filter(n => adj[n.id][day] === '夜' && !isLocked(n.id, day));
         if (nns.length === 0) break;
-        nns.sort((a, b) => adj[b.id].filter((s: any) => isNightShift(s)).length - adj[a.id].filter((s: any) => isNightShift(s)).length);
+        nns.sort((a, b) => adj[b.id].filter((s: any) => isCountableNight(s)).length - adj[a.id].filter((s: any) => isCountableNight(s)).length);
         adj[nns[0].id][day] = '日';
         if (day + 1 < daysInMonth && adj[nns[0].id][day + 1] === '明' && !isLocked(nns[0].id, day + 1)) adj[nns[0].id][day + 1] = '日';
         nc--;
@@ -2113,7 +2122,7 @@ const HcuScheduleSystem = ({ department = 'HCU', onBack }: { department?: 'HCU' 
         if (s === '休') kyuCount++;
         else if (s === '有') yuCount++;
         else if (s === '明' || s === '管明') akeCount++;
-        else if (s === '夜' || s === '管夜') nightCount++;
+        else if (s === '夜' || s === '管夜') { if (isCountableNight(s)) nightCount++; }
         else if (s === '日') dayCount++;
         else otherCount++;
       }
@@ -3070,7 +3079,7 @@ const HcuScheduleSystem = ({ department = 'HCU', onBack }: { department?: 'HCU' 
             let dayShifts = 0, nightShifts = 0, daysOff = 0, paidLeave = 0, halfDays = 0, totalWork = 0;
             shifts.forEach((s: any) => {
               if (s === '日') { dayShifts++; totalWork++; }
-              else if (s === '夜' || s === '管夜') { nightShifts++; totalWork++; }
+              else if (s === '夜' || s === '管夜') { if (!generateConfig.excludeMgmtFromNightCount || s !== '管夜') nightShifts++; totalWork++; }
               else if (s === '休') daysOff++;
               else if (s === '有') { daysOff++; paidLeave++; }
               else if (s === '午前半' || s === '午後半') { halfDays++; totalWork++; }
@@ -3124,6 +3133,7 @@ const HcuScheduleSystem = ({ department = 'HCU', onBack }: { department?: 'HCU' 
                 ) : (
                   <>
                     <BarChart label="🌙 夜勤回数" maxVal={maxNight} color="bg-purple-400" items={stats.map(s => ({ name: s.nurse.name, value: s.nightShifts }))} />
+                    {generateConfig.excludeMgmtFromNightCount && <p className="text-xs text-purple-600 -mt-4 mb-4">※管理当直（管夜）は夜勤回数に含みません</p>}
                     <BarChart label="📋 出勤日数" maxVal={maxWork} color="bg-blue-400" items={stats.map(s => ({ name: s.nurse.name, value: s.totalWork }))} />
                     <BarChart label="🏖️ 休日数" maxVal={maxRest} color="bg-emerald-400" items={stats.map(s => ({ name: s.nurse.name, value: s.restTotal }))} />
 
@@ -5868,8 +5878,21 @@ const HcuScheduleSystem = ({ department = 'HCU', onBack }: { department?: 'HCU' 
                         </select>
                       </div>
                     </div>
+
+                    <div className="col-span-3 mt-2">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={generateConfig.excludeMgmtFromNightCount}
+                          onChange={(e) => setGenerateConfig(prev => ({ ...prev, excludeMgmtFromNightCount: e.target.checked }))}
+                          className="w-5 h-5 text-indigo-600 rounded"
+                        />
+                        <span className="text-sm font-medium text-gray-700">管理当直（管夜/管明）を夜勤回数カウントから除外する</span>
+                      </label>
+                      <p className="text-xs text-gray-500 ml-7 mt-1">チェックすると管理当直は夜勤回数の統計・上限チェックに含まれません</p>
+                    </div>
                   </div>
-                  
+
                   {/* 日勤者数設定 */}
                   <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
                     <h4 className="font-bold text-blue-800 mb-3 flex items-center gap-2">
